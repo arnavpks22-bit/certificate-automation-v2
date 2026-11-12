@@ -2,12 +2,15 @@
 from hashlib import sha256
 from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
-import json
+from xml.sax.saxutils import escape
 import re
+import json
 
 import pandas as pd
 import streamlit as st
+
 from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib.utils import ImageReader
 
 from certificates import create_certificate
 from email_service import send_certificate
@@ -24,19 +27,29 @@ st.set_page_config(
 )
 
 st.title("MiraeTech Certificate Automation")
+
 st.write(
-    "Generate two personalized certificates per participant "
-    "and send both PDFs in a single email."
+    "Upload participant details, customize name placement, "
+    "generate personalized certificates, and send emails."
 )
+
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
 
 FIELDS = {
     "Name": [
-        "Name", "Student Name",
-        "Participant Name", "Full Name"
+        "Name",
+        "Student Name",
+        "Participant Name",
+        "Full Name"
     ],
     "Email": [
-        "Email", "Student Email",
-        "Email Address", "Personal Email"
+        "Email",
+        "Student Email",
+        "Email Address",
+        "Personal Email"
     ]
 }
 
@@ -63,6 +76,7 @@ def suggest_column(columns, names):
 
 def validate_students(data):
     data = data.copy().fillna("").reset_index(drop=True)
+
     errors = [[] for _ in range(len(data))]
 
     for field in ["Name", "Email"]:
@@ -77,6 +91,7 @@ def validate_students(data):
             errors[index].append("Invalid email address")
 
     normalized_emails = data["Email"].str.casefold()
+
     duplicates = (
         normalized_emails.duplicated(keep=False)
         & normalized_emails.ne("")
@@ -87,8 +102,18 @@ def validate_students(data):
             errors[index].append("Duplicate email address")
 
     report = data.copy()
-    report.insert(0, "Source Row", range(2, len(data) + 2))
-    report["Issues"] = ["; ".join(items) for items in errors]
+
+    report.insert(
+        0,
+        "Source Row",
+        range(2, len(data) + 2)
+    )
+
+    report["Issues"] = [
+        "; ".join(items)
+        for items in errors
+    ]
+
     report["Status"] = [
         "Needs correction" if items else "Ready"
         for items in errors
@@ -104,7 +129,7 @@ def safe_filename(value):
             "_",
             str(value)
         ).strip("_")[:60]
-        or "Participant"
+        or "Student"
     )
 
 
@@ -118,11 +143,19 @@ def render_email(template, student):
     )
 
 
-def make_preview(background_bytes, sample_name, settings):
+def create_visual_preview(
+    background_bytes,
+    sample_name,
+    name_x,
+    name_y,
+    name_font_size,
+    name_color,
+    name_width
+):
     """
-    Create an approximate image preview.
+    Create a visual certificate preview using Pillow.
 
-    The downloadable PDF is the final reference.
+    The generated PDF remains the final reference.
     """
 
     if background_bytes:
@@ -130,27 +163,36 @@ def make_preview(background_bytes, sample_name, settings):
             BytesIO(background_bytes)
         ).convert("RGB")
     else:
-        image = Image.new("RGB", (1200, 849), "white")
+        image = Image.new(
+            "RGB",
+            (1200, 849),
+            "white"
+        )
 
+    # Limit preview dimensions for performance.
     image.thumbnail((1400, 1400))
-    image = image.copy()
 
+    image = image.copy()
     draw = ImageDraw.Draw(image)
+
     width, height = image.size
 
-    x = width * settings["name_x"] / 100
-    y = height * settings["name_y"] / 100
+    center_x = width * name_x / 100
+    center_y = height * name_y / 100
 
-    area_width = width * settings["name_width"] / 100
-    area_width = min(
-        area_width,
-        2 * min(x, width - x)
+    text_area_width = width * name_width / 100
+
+    text_area_width = min(
+        text_area_width,
+        2 * min(center_x, width - center_x)
     )
 
+    # Scale PDF font size to preview pixels.
     scale = width / 841.89
-    initial_size = max(
+
+    font_size = max(
         8,
-        int(settings["name_font_size"] * scale)
+        int(name_font_size * scale)
     )
 
     font_paths = [
@@ -162,15 +204,21 @@ def make_preview(background_bytes, sample_name, settings):
     def load_font(size):
         for path in font_paths:
             try:
-                return ImageFont.truetype(path, size)
+                return ImageFont.truetype(
+                    path,
+                    size
+                )
             except OSError:
                 continue
+
         return ImageFont.load_default()
 
-    font = load_font(initial_size)
+    # Fit the name inside the selected area.
+    font = load_font(font_size)
 
-    for size in range(initial_size, 7, -1):
+    for size in range(font_size, 7, -1):
         font = load_font(size)
+
         bbox = draw.textbbox(
             (0, 0),
             sample_name,
@@ -181,160 +229,43 @@ def make_preview(background_bytes, sample_name, settings):
         text_height = bbox[3] - bbox[1]
 
         if (
-            text_width <= area_width
+            text_width <= text_area_width
             and text_height <= 42 * scale
         ):
             break
 
+    # Draw selected name area.
+    left = center_x - text_area_width / 2
+    right = center_x + text_area_width / 2
+
     draw.rectangle(
         [
-            x - area_width / 2,
-            y - 25 * scale,
-            x + area_width / 2,
-            y + 25 * scale
+            left,
+            center_y - 25 * scale,
+            right,
+            center_y + 25 * scale
         ],
         outline="#B7A06B",
         width=2
     )
 
+    # Draw name centered at selected position.
     draw.text(
-        (x, y),
+        (center_x, center_y),
         sample_name,
         font=font,
-        fill=settings["name_color"],
+        fill=name_color,
         anchor="mm"
     )
 
     return image
 
 
-def template_editor(number):
-    """
-    Show one certificate template editor.
-
-    Returns:
-        background_bytes, settings
-    """
-
-    st.markdown(f"#### Certificate {number}")
-
-    background_file = st.file_uploader(
-        f"Upload Certificate {number} Template (PNG/JPG)",
-        type=["png", "jpg", "jpeg"],
-        key=f"background_{number}"
-    )
-
-    background_bytes = (
-        background_file.getvalue()
-        if background_file is not None
-        else None
-    )
-
-    if background_bytes:
-        try:
-            Image.open(
-                BytesIO(background_bytes)
-            ).verify()
-        except Exception:
-            st.error(f"Invalid Certificate {number} image.")
-            st.stop()
-    else:
-        st.info(
-            f"Upload the background for Certificate {number}."
-        )
-
-    sample_name = st.text_input(
-        f"Sample Name - Certificate {number}",
-        value="Sample Participant",
-        key=f"sample_name_{number}"
-    )
-
-    left, right = st.columns(2)
-
-    with left:
-        name_x = st.slider(
-            f"Horizontal Position - Certificate {number} (%)",
-            5, 95, 50,
-            key=f"name_x_{number}"
-        )
-
-        name_y = st.slider(
-            f"Vertical Position - Certificate {number} (%)",
-            5, 95, 49,
-            key=f"name_y_{number}"
-        )
-
-    with right:
-        name_font_size = st.slider(
-            f"Font Size - Certificate {number}",
-            12, 60, 28,
-            key=f"font_size_{number}"
-        )
-
-        name_width = st.slider(
-            f"Name Area Width - Certificate {number} (%)",
-            20, 90, 65,
-            key=f"name_width_{number}"
-        )
-
-    name_color = st.color_picker(
-        f"Name Color - Certificate {number}",
-        "#14234B",
-        key=f"name_color_{number}"
-    )
-
-    settings = {
-        "name_x": name_x,
-        "name_y": name_y,
-        "name_font_size": name_font_size,
-        "name_width": name_width,
-        "name_color": name_color
-    }
-
-    if background_bytes:
-        preview = make_preview(
-            background_bytes,
-            sample_name or "Sample Participant",
-            settings
-        )
-
-        st.image(
-            preview,
-            caption=f"Certificate {number} Placement Preview",
-            use_container_width=True
-        )
-
-        try:
-            sample_pdf = create_certificate(
-                {
-                    "Name": sample_name or "Sample Participant",
-                    "Email": "preview@example.com"
-                },
-                background_bytes=background_bytes,
-                **settings
-            )
-
-            st.download_button(
-                f"Download Certificate {number} Sample PDF",
-                data=sample_pdf,
-                file_name=f"certificate_{number}_sample.pdf",
-                mime="application/pdf",
-                key=f"sample_download_{number}"
-            )
-
-        except Exception as error:
-            st.error(
-                f"Certificate {number} preview error: {error}"
-            )
-
-    return background_bytes, settings
-
-
 # ==========================================
 # STEP 1: UPLOAD SPREADSHEET
 # ==========================================
 
-st.subheader("1. Upload Participant Details")
+st.subheader("1. Upload Student Details")
 
 uploaded = st.file_uploader(
     "Upload Excel or CSV",
@@ -368,13 +299,20 @@ except Exception as error:
     st.stop()
 
 if students.empty:
-    st.warning("No participant records found.")
+    st.warning("No student records found.")
     st.stop()
 
-st.success(f"Loaded {len(students)} participants.")
+st.success(
+    f"Loaded {len(students)} student records."
+)
 
 preview = students.copy()
-preview.insert(0, "S.No.", range(1, len(preview) + 1))
+
+preview.insert(
+    0,
+    "S.No.",
+    range(1, len(preview) + 1)
+)
 
 st.dataframe(
     preview,
@@ -384,7 +322,7 @@ st.dataframe(
 
 
 # ==========================================
-# STEP 2: MATCH COLUMNS
+# STEP 2: COLUMN MAPPING
 # ==========================================
 
 st.subheader("2. Match Columns")
@@ -399,57 +337,190 @@ for field, aliases in FIELDS.items():
         options,
         index=suggest_column(columns, aliases),
         format_func=lambda value: (
-            "Not selected" if value is None else str(value)
+            "Not selected"
+            if value is None
+            else str(value)
         ),
         key=f"{file_key}_mapping_{field}"
     )
 
 
 # ==========================================
-# STEP 3: TWO CERTIFICATE EDITORS
+# STEP 3: CERTIFICATE BACKGROUND
 # ==========================================
 
-st.subheader("3. Customize Both Certificates")
+st.subheader("3. Certificate Background")
 
-st.write(
-    "Upload two different certificate templates. "
-    "Each template has independent name-position settings."
+background_file = st.file_uploader(
+    "Upload Certificate Template (PNG/JPG)",
+    type=["png", "jpg", "jpeg"],
+    key="certificate_background"
 )
 
-tab1, tab2 = st.tabs([
-    "Certificate 1",
-    "Certificate 2"
-])
+background_bytes = (
+    background_file.getvalue()
+    if background_file is not None
+    else None
+)
 
-with tab1:
-    background_1, settings_1 = template_editor(1)
-
-with tab2:
-    background_2, settings_2 = template_editor(2)
-
-if not background_1 or not background_2:
-    st.warning(
-        "Upload both certificate templates before continuing."
+if background_bytes:
+    try:
+        Image.open(
+            BytesIO(background_bytes)
+        ).verify()
+    except Exception:
+        st.error("Invalid certificate background image.")
+        st.stop()
+else:
+    st.info(
+        "No template uploaded. "
+        "A plain white background will be used."
     )
+
+
+# ==========================================
+# STEP 4: CERTIFICATE NAME EDITOR
+# ==========================================
+
+st.subheader("4. Customize Certificate Name")
+
+st.write(
+    "Adjust the name position to match your "
+    "certificate template."
+)
+
+sample_name = st.text_input(
+    "Sample Participant Name",
+    value="Sample Participant",
+    key="sample_certificate_name"
+)
+
+left_col, right_col = st.columns(2)
+
+with left_col:
+    name_x = st.slider(
+        "Horizontal Position (%)",
+        min_value=5,
+        max_value=95,
+        value=50,
+        step=1,
+        key="name_x"
+    )
+
+    name_y = st.slider(
+        "Vertical Position (%)",
+        min_value=5,
+        max_value=95,
+        value=49,
+        step=1,
+        key="name_y"
+    )
+
+with right_col:
+    name_font_size = st.slider(
+        "Name Font Size",
+        min_value=12,
+        max_value=60,
+        value=28,
+        step=1,
+        key="name_font_size"
+    )
+
+    name_width = st.slider(
+        "Name Area Width (%)",
+        min_value=20,
+        max_value=90,
+        value=65,
+        step=1,
+        key="name_width"
+    )
+
+name_color = st.color_picker(
+    "Name Font Color",
+    value="#14234B",
+    key="name_color"
+)
+
+st.caption(
+    "The selected coordinates represent the center "
+    "of the participant's name."
+)
+
+try:
+    visual_preview = create_visual_preview(
+        background_bytes=background_bytes,
+        sample_name=sample_name or "Sample Participant",
+        name_x=name_x,
+        name_y=name_y,
+        name_font_size=name_font_size,
+        name_color=name_color,
+        name_width=name_width
+    )
+
+    st.image(
+        visual_preview,
+        caption="Live Name Placement Preview",
+        use_container_width=True
+    )
+
+except Exception as error:
+    st.error(f"Unable to create preview: {error}")
     st.stop()
 
 
 # ==========================================
-# BATCH SIGNATURE
+# EXACT PDF PREVIEW
 # ==========================================
 
-placement_config = {
-    "certificate_1": settings_1,
-    "certificate_2": settings_2
+st.write("**Check the actual generated PDF**")
+
+try:
+    sample_pdf = create_certificate(
+        {
+            "Name": sample_name or "Sample Participant",
+            "Email": "preview@example.com"
+        },
+        background_bytes=background_bytes,
+        name_x=name_x,
+        name_y=name_y,
+        name_font_size=name_font_size,
+        name_color=name_color,
+        name_width=name_width
+    )
+
+    st.download_button(
+        "Download Sample Certificate PDF",
+        data=sample_pdf,
+        file_name="sample_certificate.pdf",
+        mime="application/pdf"
+    )
+
+except Exception as error:
+    st.error(f"PDF preview error: {error}")
+    st.stop()
+
+
+# ==========================================
+# SESSION SIGNATURE
+# ==========================================
+
+placement_settings = {
+    "name_x": name_x,
+    "name_y": name_y,
+    "name_font_size": name_font_size,
+    "name_color": name_color,
+    "name_width": name_width
 }
 
 signature = sha256(
     file_bytes
-    + json.dumps(mapping, sort_keys=True).encode()
-    + background_1
-    + background_2
     + json.dumps(
-        placement_config,
+        mapping,
+        sort_keys=True
+    ).encode()
+    + (background_bytes or b"")
+    + json.dumps(
+        placement_settings,
         sort_keys=True
     ).encode()
 ).hexdigest()
@@ -468,17 +539,19 @@ if st.session_state.get("batch_signature") != signature:
 
 
 # ==========================================
-# STEP 4: VALIDATE PARTICIPANTS
+# STEP 5: VALIDATE STUDENTS
 # ==========================================
 
-st.subheader("4. Validate Participant Data")
+st.subheader("5. Validate Student Data")
 
 if st.button(
-    "Validate Participant Data",
+    "Validate Student Data",
     type="primary"
 ):
     if mapping["Name"] is None or mapping["Email"] is None:
-        st.error("Select both Name and Email columns.")
+        st.error(
+            "Please select both Name and Email columns."
+        )
 
     elif mapping["Name"] == mapping["Email"]:
         st.error(
@@ -504,13 +577,20 @@ if st.button(
             report["Status"].eq("Ready")
         ].copy()
 
-        for key in [
+        st.session_state.pop(
             "certificate_records",
-            "sending_results",
-            "sending_signature"
-        ]:
-            st.session_state.pop(key, None)
+            None
+        )
 
+        st.session_state.pop(
+            "sending_results",
+            None
+        )
+
+        st.session_state.pop(
+            "sending_signature",
+            None
+        )
 
 if "validation_report" not in st.session_state:
     st.stop()
@@ -524,8 +604,15 @@ invalid = report.loc[
 
 col1, col2 = st.columns(2)
 
-col1.metric("Valid Participants", len(valid_students))
-col2.metric("Records With Errors", len(invalid))
+col1.metric(
+    "Valid Students",
+    len(valid_students)
+)
+
+col2.metric(
+    "Records With Errors",
+    len(invalid)
+)
 
 st.dataframe(
     report,
@@ -535,8 +622,8 @@ st.dataframe(
 
 if not invalid.empty:
     st.warning(
-        "Correct invalid records in the spreadsheet "
-        "and upload again."
+        "Some records have errors. "
+        "Correct them in the spreadsheet and upload again."
     )
 
     st.download_button(
@@ -553,18 +640,13 @@ if valid_students.empty:
 
 
 # ==========================================
-# STEP 5: GENERATE TWO CERTIFICATES EACH
+# STEP 6: GENERATE CERTIFICATES
 # ==========================================
 
-st.subheader("5. Generate Certificates")
-
-st.info(
-    f"{len(valid_students)} participants × 2 certificates = "
-    f"{len(valid_students) * 2} PDFs."
-)
+st.subheader("6. Generate Certificates")
 
 if st.button(
-    "Generate All Certificates",
+    "Generate Certificates",
     type="primary"
 ):
     records = []
@@ -576,44 +658,38 @@ if st.button(
     ):
         student = row.to_dict()
 
-        attachments = []
-        error_message = ""
+        filename = (
+            f"{number:04d}_"
+            f"{safe_filename(student['Name'])}.pdf"
+        )
 
         try:
-            pdf_1 = create_certificate(
+            pdf = create_certificate(
                 student,
-                background_bytes=background_1,
-                **settings_1
+                background_bytes=background_bytes,
+                name_x=name_x,
+                name_y=name_y,
+                name_font_size=name_font_size,
+                name_color=name_color,
+                name_width=name_width
             )
 
-            pdf_2 = create_certificate(
-                student,
-                background_bytes=background_2,
-                **settings_2
-            )
-
-            base_name = safe_filename(student["Name"])
-
-            attachments = [
-                (
-                    f"{number:04d}_{base_name}_Certificate_1.pdf",
-                    pdf_1
-                ),
-                (
-                    f"{number:04d}_{base_name}_Certificate_2.pdf",
-                    pdf_2
-                )
-            ]
+            records.append({
+                "student": student,
+                "filename": filename,
+                "pdf": pdf,
+                "source_row": int(source_index) + 2,
+                "error": ""
+            })
 
         except Exception as error:
-            error_message = str(error)
-
-        records.append({
-            "student": student,
-            "attachments": attachments,
-            "source_row": int(source_index) + 2,
-            "error": error_message
-        })
+            records.append({
+                "student": student,
+                "filename": filename,
+                "pdf": None,
+                "source_row": int(source_index) + 2,
+                "error": str(error)
+            })
 
         progress.progress(
             number / len(valid_students)
@@ -621,11 +697,15 @@ if st.button(
 
     st.session_state["certificate_records"] = records
 
-    for key in [
+    st.session_state.pop(
         "sending_results",
-        "sending_signature"
-    ]:
-        st.session_state.pop(key, None)
+        None
+    )
+
+    st.session_state.pop(
+        "sending_signature",
+        None
+    )
 
 
 records = st.session_state.get(
@@ -636,19 +716,18 @@ records = st.session_state.get(
 successful = [
     record
     for record in records
-    if len(record["attachments"]) == 2
+    if record["pdf"] is not None
 ]
 
 failed = [
     record
     for record in records
-    if len(record["attachments"]) != 2
+    if record["pdf"] is None
 ]
 
 if failed:
     st.error(
-        f"{len(failed)} participants could not "
-        "receive both generated certificates."
+        f"{len(failed)} certificates failed to generate."
     )
 
     st.dataframe(
@@ -660,24 +739,22 @@ if failed:
             }
             for record in failed
         ]),
-        hide_index=True,
-        use_container_width=True
+        hide_index=True
     )
 
 if not successful:
     st.stop()
 
 st.success(
-    f"Generated {len(successful) * 2} certificates "
-    f"for {len(successful)} participants."
+    f"{len(successful)} certificates generated!"
 )
 
 
 # ==========================================
-# STEP 6: DOWNLOAD ZIP
+# STEP 7: DOWNLOAD ZIP
 # ==========================================
 
-st.subheader("6. Download Certificates")
+st.subheader("7. Download Certificates")
 
 zip_buffer = BytesIO()
 
@@ -687,22 +764,24 @@ with ZipFile(
     compression=ZIP_DEFLATED
 ) as archive:
     for record in successful:
-        for filename, pdf_bytes in record["attachments"]:
-            archive.writestr(filename, pdf_bytes)
+        archive.writestr(
+            record["filename"],
+            record["pdf"]
+        )
 
 st.download_button(
-    f"Download All {len(successful) * 2} Certificates",
+    f"Download All {len(successful)} Certificates",
     data=zip_buffer.getvalue(),
-    file_name="miraetech_certificates.zip",
+    file_name="certificates.zip",
     mime="application/zip"
 )
 
 
 # ==========================================
-# STEP 7: PERSONALIZED EMAIL
+# STEP 8: PERSONALIZED EMAIL
 # ==========================================
 
-st.subheader("7. Personalized Email")
+st.subheader("8. Personalized Email")
 
 st.caption(
     "Supported placeholders: {{Name}}, {{Email}}"
@@ -710,7 +789,7 @@ st.caption(
 
 subject_template = st.text_input(
     "Email Subject",
-    value="Your Certificates of Achievement",
+    value="Congratulations on Your Participation!",
     key="email_subject"
 )
 
@@ -720,8 +799,8 @@ body_template = st.text_area(
     value=(
         "Dear {{Name}},\n\n"
         "Congratulations!\n\n"
-        "Please find your two personalized certificates "
-        "attached to this email.\n\n"
+        "Your personalized Certificate of Achievement "
+        "is attached as a PDF.\n\n"
         "Thank you for participating in our event.\n\n"
         "Best regards,\n"
         "Organizing Team"
@@ -740,7 +819,8 @@ unknown = sorted({
 
 if unknown:
     st.error(
-        "Unknown placeholders: " + ", ".join(unknown)
+        "Unknown placeholders: "
+        + ", ".join(unknown)
     )
     st.stop()
 
@@ -751,18 +831,20 @@ if not subject_template.strip() or not body_template.strip():
     st.stop()
 
 if "\n" in subject_template or "\r" in subject_template:
-    st.error("Email subject must be a single line.")
+    st.error(
+        "Email subject must be a single line."
+    )
     st.stop()
 
 
 # ==========================================
-# STEP 8: PREVIEW EMAIL AND ATTACHMENTS
+# STEP 9: EMAIL PREVIEW
 # ==========================================
 
-st.subheader("8. Preview Email")
+st.subheader("9. Preview Email")
 
 selected_index = st.selectbox(
-    "Select Participant",
+    "Select Student to Preview",
     range(len(successful)),
     format_func=lambda index: (
         f"{successful[index]['student']['Name']} "
@@ -772,37 +854,47 @@ selected_index = st.selectbox(
 )
 
 record = successful[selected_index]
-student = record["student"]
 
-st.write("**To:**", student["Email"])
+st.write(
+    "**To:**",
+    record["student"]["Email"]
+)
 
 st.write(
     "**Subject:**",
-    render_email(subject_template, student)
+    render_email(
+        subject_template,
+        record["student"]
+    )
 )
 
-st.text(render_email(body_template, student))
-
-st.write("**Attachments: 2 PDF files**")
-
-for attachment_number, (filename, pdf_bytes) in enumerate(
-    record["attachments"],
-    start=1
-):
-    st.download_button(
-        f"Download Preview - Certificate {attachment_number}",
-        data=pdf_bytes,
-        file_name=filename,
-        mime="application/pdf",
-        key=f"preview_pdf_{attachment_number}_{signature}"
+st.text(
+    render_email(
+        body_template,
+        record["student"]
     )
+)
+
+st.write(
+    "**Attachment:**",
+    record["filename"]
+)
+
+st.download_button(
+    "Download Preview Certificate",
+    data=record["pdf"],
+    file_name=record["filename"],
+    mime="application/pdf"
+)
 
 
 # ==========================================
-# STEP 9: SENDER EMAIL CONFIGURATION
+# STEP 10: SENDER EMAIL CONFIGURATION
 # ==========================================
 
-st.subheader("9. Send Certificates")
+st.subheader("10. Send Certificates")
+
+st.write("**Sender Email Configuration**")
 
 sender = st.text_input(
     "Sender Gmail Address",
@@ -818,7 +910,8 @@ app_password = st.text_input(
 ).replace(" ", "")
 
 st.caption(
-    "Use a Google App Password, not your regular password."
+    "Use a Google App Password, "
+    "not your regular Gmail password."
 )
 
 email_configured = bool(
@@ -829,14 +922,18 @@ email_configured = bool(
 
 if not sender or not app_password:
     st.warning(
-        "Enter your Gmail address and App Password."
+        "Enter your Gmail address and App Password "
+        "before sending certificates."
     )
+
 elif not re.fullmatch(EMAIL_PATTERN, sender):
     st.error("Enter a valid sender email address.")
+
 elif len(app_password) != 16:
     st.error(
         "Gmail App Password must contain 16 characters."
     )
+
 else:
     st.success(
         "Credentials entered. Ready to attempt sending."
@@ -844,15 +941,17 @@ else:
 
 
 # ==========================================
-# STEP 10: SEND TWO PDFs IN ONE EMAIL
+# SEND CERTIFICATES
 # ==========================================
 
 if email_configured:
+    st.write("**Sender:**", sender)
+
     recipients = pd.DataFrame([
         {
             "Name": item["student"]["Name"],
             "Email": item["student"]["Email"],
-            "Attachments": 2
+            "Certificate": item["filename"]
         }
         for item in successful
     ])
@@ -876,8 +975,14 @@ if email_configured:
         st.session_state.get("sending_signature")
         != email_signature
     ):
-        st.session_state.pop("sending_results", None)
-        st.session_state["sending_signature"] = email_signature
+        st.session_state.pop(
+            "sending_results",
+            None
+        )
+
+        st.session_state[
+            "sending_signature"
+        ] = email_signature
 
     already_submitted = (
         "sending_results" in st.session_state
@@ -885,13 +990,14 @@ if email_configured:
 
     if already_submitted:
         st.warning(
-            "This batch has already been submitted during "
-            "this session. Check Gmail Sent before retrying."
+            "This batch has already been submitted "
+            "during this session. Check Gmail Sent "
+            "before sending again."
         )
 
     confirmed = st.checkbox(
-        "I have verified all recipients and both "
-        "certificates, and authorize sending."
+        "I have verified the recipients and "
+        "authorize sending these certificates."
     )
 
     if st.button(
@@ -901,13 +1007,10 @@ if email_configured:
     ):
         progress = st.progress(0)
 
-        # Record attempts before sending to reduce
-        # accidental duplicate submissions.
         st.session_state["sending_results"] = [
             {
                 "Name": item["student"]["Name"],
                 "Email": item["student"]["Email"],
-                "Attachments": 2,
                 "Status": "Not yet attempted"
             }
             for item in successful
@@ -919,7 +1022,7 @@ if email_configured:
             st.session_state[
                 "sending_results"
             ][index]["Status"] = (
-                "Attempted - awaiting result"
+                "Attempted — awaiting result"
             )
 
             try:
@@ -935,14 +1038,15 @@ if email_configured:
                         body_template,
                         student
                     ),
-                    attachments=item["attachments"]
+                    certificate_pdf=item["pdf"],
+                    filename=item["filename"]
                 )
 
                 status = "Accepted by Gmail"
 
             except Exception as error:
                 status = (
-                    "Not confirmed - check Gmail Sent "
+                    "Not confirmed — check Gmail Sent "
                     "before retrying"
                 )
 
@@ -965,7 +1069,7 @@ if email_configured:
 # ==========================================
 
 if "sending_results" in st.session_state:
-    st.subheader("10. Sending Results")
+    st.subheader("11. Sending Results")
 
     results_table = pd.DataFrame(
         st.session_state["sending_results"]
@@ -987,6 +1091,7 @@ if "sending_results" in st.session_state:
     )
 
     st.info(
-        "Gmail acceptance does not guarantee inbox delivery. "
-        "Check Gmail Sent before retrying uncertain deliveries."
+        "Gmail acceptance does not guarantee inbox "
+        "delivery. Check Gmail Sent before retrying "
+        "any uncertain deliveries."
     )
