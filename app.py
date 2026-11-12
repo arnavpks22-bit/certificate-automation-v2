@@ -17,12 +17,12 @@ from email_service import send_certificate
 # ==========================================
 
 st.set_page_config(
-    page_title="Certificate Automation",
-    page_icon="🎓",
+    page_title="MiraeTech'sCertificate Automation",
+    page_icon="",
     layout="wide"
 )
 
-st.title("🎓 Certificate Automation")
+st.title("MiraeTech's Certificate Automation")
 
 st.write(
     "Upload student details, generate personalized "
@@ -545,19 +545,15 @@ body_template = st.text_area(
     value=(
         "Dear {{Name}},\n\n"
         "Congratulations!\n\n"
-        "We sincerely appreciate your participation "
-        "and enthusiasm.\n\n"
-        "Your dedication and involvement have been "
-        "truly valuable, and we are delighted to "
-        "recognize your efforts.\n\n"
+        "Congratulations on your achievement in the Robotics Challenge!\n\n"
+        "Your personalized Certificate of Achievement is attached as a PDF.\n\n"
         "Please find your personalized certificate "
         "attached to this email as a token of "
         "appreciation for your participation.\n\n"
         "Thank you once again for being a part "
         "of this experience. We wish you continued "
         "success in all your future endeavours!\n\n"
-        "Best regards,\n"
-        "Certificate Automation Team"
+        "Best regards\n"        
     ),
     key="email_body"
 )
