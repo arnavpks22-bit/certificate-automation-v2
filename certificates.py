@@ -18,20 +18,13 @@ def create_certificate(
     name_y=49,
     name_font_size=28,
     name_color="#14234B",
-    name_width=65,
+    name_width=65
 ):
     """
-    Generate a personalized A4 landscape certificate.
+    Generate one personalized certificate PDF.
 
-    name_x, name_y:
-        Percentage positions measured from the top-left.
-        Both represent the CENTER of the name.
-
-    name_font_size:
-        Maximum name font size in PDF points.
-
-    name_width:
-        Maximum text area width as a percentage.
+    Position values are percentages from the top-left.
+    name_x and name_y represent the name's center.
 
     Returns PDF bytes.
     """
@@ -44,32 +37,28 @@ def create_certificate(
     if not name:
         raise ValueError("Student name cannot be empty.")
 
-    if not 0 <= name_x <= 100:
+    if not 0 < name_x < 100:
         raise ValueError("Invalid horizontal position.")
 
-    if not 0 <= name_y <= 100:
+    if not 0 < name_y < 100:
         raise ValueError("Invalid vertical position.")
 
     if not 10 <= name_width <= 100:
         raise ValueError("Invalid name area width.")
 
     if not 8 <= name_font_size <= 100:
-        raise ValueError("Invalid font size.")
-
-    output = BytesIO()
+        raise ValueError("Invalid name font size.")
 
     width = 841.89
     height = 595.28
 
+    output = BytesIO()
     pdf = canvas.Canvas(
         output,
         pagesize=(width, height)
     )
 
-    # --------------------------------------
-    # DRAW CERTIFICATE BACKGROUND
-    # --------------------------------------
-
+    # Draw uploaded certificate background.
     if background_bytes:
         try:
             background = ImageReader(
@@ -85,7 +74,6 @@ def create_certificate(
                 preserveAspectRatio=False,
                 mask="auto"
             )
-
         except Exception as error:
             raise ValueError(
                 "Unable to process certificate background."
@@ -94,39 +82,27 @@ def create_certificate(
         pdf.setFillColor(colors.white)
         pdf.rect(
             0, 0, width, height,
-            fill=1,
-            stroke=0
+            fill=1, stroke=0
         )
-
-    # --------------------------------------
-    # NAME POSITION
-    # --------------------------------------
 
     center_x = width * name_x / 100
     center_y = height * (1 - name_y / 100)
 
     text_width = width * name_width / 100
-
-    # Keep the text area inside the page.
     text_width = min(
         text_width,
         2 * min(center_x, width - center_x)
     )
 
     if text_width <= 0:
-        raise ValueError(
-            "Name position is too close to the edge."
-        )
+        raise ValueError("Name area is too close to the edge.")
 
-    safe_text = escape(name)
-
+    safe_name = escape(name)
     paragraph = None
     text_height = 0
 
-    # Reduce font size for long names.
-    for font_size in range(
-        int(name_font_size), 7, -1
-    ):
+    # Automatically reduce font size for long names.
+    for font_size in range(int(name_font_size), 7, -1):
         style = ParagraphStyle(
             name="CertificateName",
             fontName="Helvetica-Bold",
@@ -139,33 +115,21 @@ def create_certificate(
             splitLongWords=True
         )
 
-        paragraph = Paragraph(
-            safe_text,
-            style
-        )
-
-        _, text_height = paragraph.wrap(
-            text_width,
-            height
-        )
+        paragraph = Paragraph(safe_name, style)
+        _, text_height = paragraph.wrap(text_width, height)
 
         if text_height <= 42:
             break
 
     if text_height > 42:
         raise ValueError(
-            "Participant name is too long for "
-            "the selected name area."
+            "Participant name is too long for the selected area."
         )
-
-    # Center the name vertically and horizontally.
-    draw_x = center_x - text_width / 2
-    draw_y = center_y - text_height / 2
 
     paragraph.drawOn(
         pdf,
-        draw_x,
-        draw_y
+        center_x - text_width / 2,
+        center_y - text_height / 2
     )
 
     pdf.showPage()
