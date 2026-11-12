@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 
-from certificates import create_certificate, FONT_OPTIONS
+from certificates import create_certificate
 from email_service import send_certificate
 
 
@@ -24,34 +24,23 @@ st.set_page_config(
 )
 
 st.title("MiraeTech Certificate Automation")
-
 st.write(
-    "Generate one or two personalized certificates "
-    "per participant and send them in a single email."
+    "Generate two personalized certificates per participant "
+    "and send both PDFs in a single email."
 )
-
-
-# ==========================================
-# CONFIGURATION
-# ==========================================
 
 FIELDS = {
     "Name": [
-        "Name",
-        "Student Name",
-        "Participant Name",
-        "Full Name"
+        "Name", "Student Name",
+        "Participant Name", "Full Name"
     ],
     "Email": [
-        "Email",
-        "Student Email",
-        "Email Address",
-        "Personal Email"
+        "Email", "Student Email",
+        "Email Address", "Personal Email"
     ]
 }
 
 EMAIL_PATTERN = r"[^@\s]+@[^@\s]+\.[^@\s]+"
-
 TOKEN_PATTERN = r"\{\{\s*([^{}]+?)\s*\}\}"
 
 
@@ -74,7 +63,6 @@ def suggest_column(columns, names):
 
 def validate_students(data):
     data = data.copy().fillna("").reset_index(drop=True)
-
     errors = [[] for _ in range(len(data))]
 
     for field in ["Name", "Email"]:
@@ -85,14 +73,10 @@ def validate_students(data):
                 errors[index].append(f"Missing {field}")
 
     for index, email in enumerate(data["Email"]):
-        if email and not re.fullmatch(
-            EMAIL_PATTERN,
-            email
-        ):
+        if email and not re.fullmatch(EMAIL_PATTERN, email):
             errors[index].append("Invalid email address")
 
     normalized_emails = data["Email"].str.casefold()
-
     duplicates = (
         normalized_emails.duplicated(keep=False)
         & normalized_emails.ne("")
@@ -103,18 +87,8 @@ def validate_students(data):
             errors[index].append("Duplicate email address")
 
     report = data.copy()
-
-    report.insert(
-        0,
-        "Source Row",
-        range(2, len(data) + 2)
-    )
-
-    report["Issues"] = [
-        "; ".join(items)
-        for items in errors
-    ]
-
+    report.insert(0, "Source Row", range(2, len(data) + 2))
+    report["Issues"] = ["; ".join(items) for items in errors]
     report["Status"] = [
         "Needs correction" if items else "Ready"
         for items in errors
@@ -144,126 +118,59 @@ def render_email(template, student):
     )
 
 
-# ==========================================
-# PREVIEW FONT HANDLING
-# ==========================================
-
-def load_preview_font(font_name, size):
-    """
-    Find an approximate matching font for Pillow.
-
-    PDF generation uses the selected ReportLab font.
-    """
-
-    font_files = {
-        "Helvetica": [
-            "C:/Windows/Fonts/arial.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"
-        ],
-        "Helvetica-Bold": [
-            "C:/Windows/Fonts/arialbd.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"
-        ],
-        "Helvetica-Oblique": [
-            "C:/Windows/Fonts/ariali.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Italic.ttf"
-        ],
-        "Times-Roman": [
-            "C:/Windows/Fonts/times.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf"
-        ],
-        "Times-Bold": [
-            "C:/Windows/Fonts/timesbd.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf"
-        ],
-        "Times-Italic": [
-            "C:/Windows/Fonts/timesi.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Italic.ttf"
-        ],
-        "Courier": [
-            "C:/Windows/Fonts/cour.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf"
-        ],
-        "Courier-Bold": [
-            "C:/Windows/Fonts/courbd.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationMono-Bold.ttf"
-        ],
-        "Courier-Oblique": [
-            "C:/Windows/Fonts/couri.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationMono-Italic.ttf"
-        ]
-    }
-
-    paths = font_files.get(font_name, [])
-
-    for path in paths:
-        try:
-            return ImageFont.truetype(
-                path,
-                max(8, int(size))
-            )
-        except OSError:
-            continue
-
-    return ImageFont.load_default()
-
-
-# ==========================================
-# VISUAL PREVIEW
-# ==========================================
-
-def make_preview(
-    background_bytes,
-    sample_name,
-    settings
-):
+def make_preview(background_bytes, sample_name, settings):
     """
     Create an approximate image preview.
 
-    Download the sample PDF for exact output.
+    The downloadable PDF is the final reference.
     """
 
-    image = Image.open(
-        BytesIO(background_bytes)
-    ).convert("RGB")
+    if background_bytes:
+        image = Image.open(
+            BytesIO(background_bytes)
+        ).convert("RGB")
+    else:
+        image = Image.new("RGB", (1200, 849), "white")
 
     image.thumbnail((1400, 1400))
     image = image.copy()
 
     draw = ImageDraw.Draw(image)
-
     width, height = image.size
 
-    center_x = width * settings["name_x"] / 100
-    center_y = height * settings["name_y"] / 100
+    x = width * settings["name_x"] / 100
+    y = height * settings["name_y"] / 100
 
     area_width = width * settings["name_width"] / 100
-
     area_width = min(
         area_width,
-        2 * min(center_x, width - center_x)
+        2 * min(x, width - x)
     )
 
     scale = width / 841.89
-
     initial_size = max(
         8,
         int(settings["name_font_size"] * scale)
     )
 
-    font = load_preview_font(
-        settings["name_font"],
-        initial_size
-    )
+    font_paths = [
+        "C:/Windows/Fonts/arialbd.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"
+    ]
 
-    # Reduce preview font size for long names.
+    def load_font(size):
+        for path in font_paths:
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    font = load_font(initial_size)
+
     for size in range(initial_size, 7, -1):
-
-        font = load_preview_font(
-            settings["name_font"],
-            size
-        )
-
+        font = load_font(size)
         bbox = draw.textbbox(
             (0, 0),
             sample_name,
@@ -279,20 +186,19 @@ def make_preview(
         ):
             break
 
-    # Show the selected name area.
     draw.rectangle(
         [
-            center_x - area_width / 2,
-            center_y - 25 * scale,
-            center_x + area_width / 2,
-            center_y + 25 * scale
+            x - area_width / 2,
+            y - 25 * scale,
+            x + area_width / 2,
+            y + 25 * scale
         ],
         outline="#B7A06B",
         width=2
     )
 
     draw.text(
-        (center_x, center_y),
+        (x, y),
         sample_name,
         font=font,
         fill=settings["name_color"],
@@ -302,13 +208,9 @@ def make_preview(
     return image
 
 
-# ==========================================
-# CERTIFICATE TEMPLATE EDITOR
-# ==========================================
-
 def template_editor(number):
     """
-    Configure one certificate template.
+    Show one certificate template editor.
 
     Returns:
         background_bytes, settings
@@ -317,7 +219,7 @@ def template_editor(number):
     st.markdown(f"#### Certificate {number}")
 
     background_file = st.file_uploader(
-        f"Upload Certificate {number} Template",
+        f"Upload Certificate {number} Template (PNG/JPG)",
         type=["png", "jpg", "jpeg"],
         key=f"background_{number}"
     )
@@ -333,16 +235,12 @@ def template_editor(number):
             Image.open(
                 BytesIO(background_bytes)
             ).verify()
-
         except Exception:
-            st.error(
-                f"Invalid Certificate {number} template."
-            )
+            st.error(f"Invalid Certificate {number} image.")
             st.stop()
-
     else:
         st.info(
-            f"Upload a PNG/JPG template for Certificate {number}."
+            f"Upload the background for Certificate {number}."
         )
 
     sample_name = st.text_input(
@@ -356,47 +254,32 @@ def template_editor(number):
     with left:
         name_x = st.slider(
             f"Horizontal Position - Certificate {number} (%)",
-            min_value=5,
-            max_value=95,
-            value=50,
+            5, 95, 50,
             key=f"name_x_{number}"
         )
 
         name_y = st.slider(
             f"Vertical Position - Certificate {number} (%)",
-            min_value=5,
-            max_value=95,
-            value=49,
+            5, 95, 49,
             key=f"name_y_{number}"
         )
 
     with right:
         name_font_size = st.slider(
             f"Font Size - Certificate {number}",
-            min_value=12,
-            max_value=60,
-            value=28,
+            12, 60, 28,
             key=f"font_size_{number}"
         )
 
         name_width = st.slider(
             f"Name Area Width - Certificate {number} (%)",
-            min_value=20,
-            max_value=90,
-            value=65,
+            20, 90, 65,
             key=f"name_width_{number}"
         )
 
-    name_font = st.selectbox(
-        f"Font Family - Certificate {number}",
-        options=FONT_OPTIONS,
-        index=1,
-        key=f"name_font_{number}"
-    )
-
     name_color = st.color_picker(
-        f"Font Color - Certificate {number}",
-        value="#14234B",
+        f"Name Color - Certificate {number}",
+        "#14234B",
         key=f"name_color_{number}"
     )
 
@@ -405,28 +288,23 @@ def template_editor(number):
         "name_y": name_y,
         "name_font_size": name_font_size,
         "name_width": name_width,
-        "name_color": name_color,
-        "name_font": name_font
+        "name_color": name_color
     }
 
     if background_bytes:
+        preview = make_preview(
+            background_bytes,
+            sample_name or "Sample Participant",
+            settings
+        )
+
+        st.image(
+            preview,
+            caption=f"Certificate {number} Placement Preview",
+            use_container_width=True
+        )
 
         try:
-            preview = make_preview(
-                background_bytes,
-                sample_name or "Sample Participant",
-                settings
-            )
-
-            st.image(
-                preview,
-                caption=(
-                    f"Certificate {number} "
-                    "Name Placement Preview"
-                ),
-                use_container_width=True
-            )
-
             sample_pdf = create_certificate(
                 {
                     "Name": sample_name or "Sample Participant",
@@ -441,7 +319,7 @@ def template_editor(number):
                 data=sample_pdf,
                 file_name=f"certificate_{number}_sample.pdf",
                 mime="application/pdf",
-                key=f"sample_pdf_{number}"
+                key=f"sample_download_{number}"
             )
 
         except Exception as error:
@@ -471,13 +349,11 @@ file_key = sha256(file_bytes).hexdigest()
 
 try:
     if uploaded.name.lower().endswith(".csv"):
-
         students = pd.read_csv(
             BytesIO(file_bytes),
             dtype=str,
             keep_default_na=False
         )
-
     else:
         students = pd.read_excel(
             BytesIO(file_bytes),
@@ -488,26 +364,17 @@ try:
     students = students.fillna("").reset_index(drop=True)
 
 except Exception as error:
-    st.error(
-        f"Unable to read spreadsheet: {error}"
-    )
+    st.error(f"Unable to read spreadsheet: {error}")
     st.stop()
 
 if students.empty:
     st.warning("No participant records found.")
     st.stop()
 
-st.success(
-    f"Loaded {len(students)} participant records."
-)
+st.success(f"Loaded {len(students)} participants.")
 
 preview = students.copy()
-
-preview.insert(
-    0,
-    "S.No.",
-    range(1, len(preview) + 1)
-)
+preview.insert(0, "S.No.", range(1, len(preview) + 1))
 
 st.dataframe(
     preview,
@@ -524,104 +391,45 @@ st.subheader("2. Match Columns")
 
 columns = list(students.columns)
 options = [None] + columns
-
 mapping = {}
 
 for field, aliases in FIELDS.items():
-
     mapping[field] = st.selectbox(
         f"{field} *",
         options,
-        index=suggest_column(
-            columns,
-            aliases
-        ),
+        index=suggest_column(columns, aliases),
         format_func=lambda value: (
-            "Not selected"
-            if value is None
-            else str(value)
+            "Not selected" if value is None else str(value)
         ),
         key=f"{file_key}_mapping_{field}"
     )
 
 
 # ==========================================
-# STEP 3: SELECT CERTIFICATE COUNT
+# STEP 3: TWO CERTIFICATE EDITORS
 # ==========================================
 
-st.subheader("3. Certificate Configuration")
+st.subheader("3. Customize Both Certificates")
 
-certificate_count = st.radio(
-    "How many certificates per participant?",
-    options=[1, 2],
-    index=0,
-    horizontal=True,
-    key="certificate_count"
+st.write(
+    "Upload two different certificate templates. "
+    "Each template has independent name-position settings."
 )
 
-st.info(
-    f"Each participant will receive "
-    f"{certificate_count} certificate(s) "
-    "in one email."
-)
+tab1, tab2 = st.tabs([
+    "Certificate 1",
+    "Certificate 2"
+])
 
-
-# ==========================================
-# STEP 4: CUSTOMIZE TEMPLATES
-# ==========================================
-
-st.subheader("4. Customize Certificate Templates")
-
-templates = []
-
-if certificate_count == 1:
-
+with tab1:
     background_1, settings_1 = template_editor(1)
 
-    templates.append({
-        "number": 1,
-        "background": background_1,
-        "settings": settings_1
-    })
+with tab2:
+    background_2, settings_2 = template_editor(2)
 
-else:
-
-    tab1, tab2 = st.tabs([
-        "Certificate 1",
-        "Certificate 2"
-    ])
-
-    with tab1:
-        background_1, settings_1 = template_editor(1)
-
-    with tab2:
-        background_2, settings_2 = template_editor(2)
-
-    templates.extend([
-        {
-            "number": 1,
-            "background": background_1,
-            "settings": settings_1
-        },
-        {
-            "number": 2,
-            "background": background_2,
-            "settings": settings_2
-        }
-    ])
-
-
-# Require all selected templates.
-missing_templates = [
-    item["number"]
-    for item in templates
-    if not item["background"]
-]
-
-if missing_templates:
+if not background_1 or not background_2:
     st.warning(
-        "Upload all selected certificate templates "
-        "before continuing."
+        "Upload both certificate templates before continuing."
     )
     st.stop()
 
@@ -630,34 +438,23 @@ if missing_templates:
 # BATCH SIGNATURE
 # ==========================================
 
-configuration = {
-    "certificate_count": certificate_count,
-    "templates": [
-        {
-            "number": item["number"],
-            "settings": item["settings"],
-            "background_hash": sha256(
-                item["background"]
-            ).hexdigest()
-        }
-        for item in templates
-    ]
+placement_config = {
+    "certificate_1": settings_1,
+    "certificate_2": settings_2
 }
 
 signature = sha256(
     file_bytes
+    + json.dumps(mapping, sort_keys=True).encode()
+    + background_1
+    + background_2
     + json.dumps(
-        mapping,
-        sort_keys=True
-    ).encode()
-    + json.dumps(
-        configuration,
+        placement_config,
         sort_keys=True
     ).encode()
 ).hexdigest()
 
 if st.session_state.get("batch_signature") != signature:
-
     st.session_state["batch_signature"] = signature
 
     for key in [
@@ -671,23 +468,17 @@ if st.session_state.get("batch_signature") != signature:
 
 
 # ==========================================
-# STEP 5: VALIDATE PARTICIPANTS
+# STEP 4: VALIDATE PARTICIPANTS
 # ==========================================
 
-st.subheader("5. Validate Participant Data")
+st.subheader("4. Validate Participant Data")
 
 if st.button(
     "Validate Participant Data",
     type="primary"
 ):
-
-    if (
-        mapping["Name"] is None
-        or mapping["Email"] is None
-    ):
-        st.error(
-            "Please select Name and Email columns."
-        )
+    if mapping["Name"] is None or mapping["Email"] is None:
+        st.error("Select both Name and Email columns.")
 
     elif mapping["Name"] == mapping["Email"]:
         st.error(
@@ -695,7 +486,6 @@ if st.button(
         )
 
     else:
-
         mapped = pd.DataFrame({
             "Name": students[
                 mapping["Name"]
@@ -734,15 +524,8 @@ invalid = report.loc[
 
 col1, col2 = st.columns(2)
 
-col1.metric(
-    "Valid Participants",
-    len(valid_students)
-)
-
-col2.metric(
-    "Records With Errors",
-    len(invalid)
-)
+col1.metric("Valid Participants", len(valid_students))
+col2.metric("Records With Errors", len(invalid))
 
 st.dataframe(
     report,
@@ -751,10 +534,9 @@ st.dataframe(
 )
 
 if not invalid.empty:
-
     st.warning(
-        "Some records have errors. "
-        "Correct the spreadsheet and upload it again."
+        "Correct invalid records in the spreadsheet "
+        "and upload again."
     )
 
     st.download_button(
@@ -771,26 +553,20 @@ if valid_students.empty:
 
 
 # ==========================================
-# STEP 6: GENERATE CERTIFICATES
+# STEP 5: GENERATE TWO CERTIFICATES EACH
 # ==========================================
 
-st.subheader("6. Generate Certificates")
-
-total_expected = (
-    len(valid_students) * certificate_count
-)
+st.subheader("5. Generate Certificates")
 
 st.info(
-    f"{len(valid_students)} participants × "
-    f"{certificate_count} certificate(s) = "
-    f"{total_expected} PDF files."
+    f"{len(valid_students)} participants × 2 certificates = "
+    f"{len(valid_students) * 2} PDFs."
 )
 
 if st.button(
     "Generate All Certificates",
     type="primary"
 ):
-
     records = []
     progress = st.progress(0)
 
@@ -798,42 +574,39 @@ if st.button(
         valid_students.iterrows(),
         start=1
     ):
-
         student = row.to_dict()
 
         attachments = []
         error_message = ""
 
         try:
+            pdf_1 = create_certificate(
+                student,
+                background_bytes=background_1,
+                **settings_1
+            )
 
-            for item in templates:
+            pdf_2 = create_certificate(
+                student,
+                background_bytes=background_2,
+                **settings_2
+            )
 
-                pdf_bytes = create_certificate(
-                    student,
-                    background_bytes=item["background"],
-                    **item["settings"]
+            base_name = safe_filename(student["Name"])
+
+            attachments = [
+                (
+                    f"{number:04d}_{base_name}_Certificate_1.pdf",
+                    pdf_1
+                ),
+                (
+                    f"{number:04d}_{base_name}_Certificate_2.pdf",
+                    pdf_2
                 )
-
-                base_name = safe_filename(
-                    student["Name"]
-                )
-
-                filename = (
-                    f"{number:04d}_"
-                    f"{base_name}_"
-                    f"Certificate_{item['number']}.pdf"
-                )
-
-                attachments.append(
-                    (filename, pdf_bytes)
-                )
+            ]
 
         except Exception as error:
-
             error_message = str(error)
-
-            # Do not send incomplete certificate sets.
-            attachments = []
 
         records.append({
             "student": student,
@@ -863,20 +636,19 @@ records = st.session_state.get(
 successful = [
     record
     for record in records
-    if len(record["attachments"]) == certificate_count
+    if len(record["attachments"]) == 2
 ]
 
 failed = [
     record
     for record in records
-    if len(record["attachments"]) != certificate_count
+    if len(record["attachments"]) != 2
 ]
 
 if failed:
-
     st.error(
-        f"Certificate generation failed for "
-        f"{len(failed)} participants."
+        f"{len(failed)} participants could not "
+        "receive both generated certificates."
     )
 
     st.dataframe(
@@ -895,21 +667,17 @@ if failed:
 if not successful:
     st.stop()
 
-total_generated = (
-    len(successful) * certificate_count
-)
-
 st.success(
-    f"Successfully generated {total_generated} "
-    f"certificates for {len(successful)} participants."
+    f"Generated {len(successful) * 2} certificates "
+    f"for {len(successful)} participants."
 )
 
 
 # ==========================================
-# STEP 7: DOWNLOAD CERTIFICATES
+# STEP 6: DOWNLOAD ZIP
 # ==========================================
 
-st.subheader("7. Download Certificates")
+st.subheader("6. Download Certificates")
 
 zip_buffer = BytesIO()
 
@@ -918,18 +686,12 @@ with ZipFile(
     "w",
     compression=ZIP_DEFLATED
 ) as archive:
-
     for record in successful:
-
         for filename, pdf_bytes in record["attachments"]:
-
-            archive.writestr(
-                filename,
-                pdf_bytes
-            )
+            archive.writestr(filename, pdf_bytes)
 
 st.download_button(
-    f"Download All {total_generated} Certificates",
+    f"Download All {len(successful) * 2} Certificates",
     data=zip_buffer.getvalue(),
     file_name="miraetech_certificates.zip",
     mime="application/zip"
@@ -937,18 +699,18 @@ st.download_button(
 
 
 # ==========================================
-# STEP 8: PERSONALIZED EMAIL
+# STEP 7: PERSONALIZED EMAIL
 # ==========================================
 
-st.subheader("8. Personalized Email")
+st.subheader("7. Personalized Email")
 
 st.caption(
-    "Available placeholders: {{Name}}, {{Email}}"
+    "Supported placeholders: {{Name}}, {{Email}}"
 )
 
 subject_template = st.text_input(
     "Email Subject",
-    value="Your Certificate(s) of Achievement",
+    value="Your Certificates of Achievement",
     key="email_subject"
 )
 
@@ -958,7 +720,7 @@ body_template = st.text_area(
     value=(
         "Dear {{Name}},\n\n"
         "Congratulations!\n\n"
-        "Please find your personalized certificate(s) "
+        "Please find your two personalized certificates "
         "attached to this email.\n\n"
         "Thank you for participating in our event.\n\n"
         "Best regards,\n"
@@ -978,32 +740,26 @@ unknown = sorted({
 
 if unknown:
     st.error(
-        "Unknown placeholders: "
-        + ", ".join(unknown)
+        "Unknown placeholders: " + ", ".join(unknown)
     )
     st.stop()
 
-if (
-    not subject_template.strip()
-    or not body_template.strip()
-):
+if not subject_template.strip() or not body_template.strip():
     st.warning(
         "Email subject and message cannot be empty."
     )
     st.stop()
 
 if "\n" in subject_template or "\r" in subject_template:
-    st.error(
-        "Email subject must be a single line."
-    )
+    st.error("Email subject must be a single line.")
     st.stop()
 
 
 # ==========================================
-# STEP 9: PREVIEW EMAIL
+# STEP 8: PREVIEW EMAIL AND ATTACHMENTS
 # ==========================================
 
-st.subheader("9. Preview Email and Attachments")
+st.subheader("8. Preview Email")
 
 selected_index = st.selectbox(
     "Select Participant",
@@ -1018,52 +774,35 @@ selected_index = st.selectbox(
 record = successful[selected_index]
 student = record["student"]
 
-st.write(
-    "**To:**",
-    student["Email"]
-)
+st.write("**To:**", student["Email"])
 
 st.write(
     "**Subject:**",
-    render_email(
-        subject_template,
-        student
-    )
+    render_email(subject_template, student)
 )
 
-st.text(
-    render_email(
-        body_template,
-        student
-    )
-)
+st.text(render_email(body_template, student))
 
-st.write(
-    f"**Attachments:** {certificate_count} PDF file(s)"
-)
+st.write("**Attachments: 2 PDF files**")
 
 for attachment_number, (filename, pdf_bytes) in enumerate(
     record["attachments"],
     start=1
 ):
-
     st.download_button(
         f"Download Preview - Certificate {attachment_number}",
         data=pdf_bytes,
         file_name=filename,
         mime="application/pdf",
-        key=(
-            f"preview_pdf_"
-            f"{attachment_number}_{signature}"
-        )
+        key=f"preview_pdf_{attachment_number}_{signature}"
     )
 
 
 # ==========================================
-# STEP 10: GMAIL CONFIGURATION
+# STEP 9: SENDER EMAIL CONFIGURATION
 # ==========================================
 
-st.subheader("10. Send Certificates")
+st.subheader("9. Send Certificates")
 
 sender = st.text_input(
     "Sender Gmail Address",
@@ -1079,55 +818,41 @@ app_password = st.text_input(
 ).replace(" ", "")
 
 st.caption(
-    "Use a Google App Password, "
-    "not your regular Gmail password."
+    "Use a Google App Password, not your regular password."
 )
 
 email_configured = bool(
     sender
-    and re.fullmatch(
-        EMAIL_PATTERN,
-        sender
-    )
+    and re.fullmatch(EMAIL_PATTERN, sender)
     and len(app_password) == 16
 )
 
 if not sender or not app_password:
-
     st.warning(
         "Enter your Gmail address and App Password."
     )
-
 elif not re.fullmatch(EMAIL_PATTERN, sender):
-
-    st.error(
-        "Enter a valid sender email address."
-    )
-
+    st.error("Enter a valid sender email address.")
 elif len(app_password) != 16:
-
     st.error(
         "Gmail App Password must contain 16 characters."
     )
-
 else:
-
     st.success(
         "Credentials entered. Ready to attempt sending."
     )
 
 
 # ==========================================
-# STEP 11: SEND CERTIFICATES
+# STEP 10: SEND TWO PDFs IN ONE EMAIL
 # ==========================================
 
 if email_configured:
-
     recipients = pd.DataFrame([
         {
             "Name": item["student"]["Name"],
             "Email": item["student"]["Email"],
-            "Attachments": certificate_count
+            "Attachments": 2
         }
         for item in successful
     ])
@@ -1151,31 +876,22 @@ if email_configured:
         st.session_state.get("sending_signature")
         != email_signature
     ):
-
-        st.session_state.pop(
-            "sending_results",
-            None
-        )
-
-        st.session_state["sending_signature"] = (
-            email_signature
-        )
+        st.session_state.pop("sending_results", None)
+        st.session_state["sending_signature"] = email_signature
 
     already_submitted = (
         "sending_results" in st.session_state
     )
 
     if already_submitted:
-
         st.warning(
-            "This batch has already been submitted "
-            "during this session. Check Gmail Sent "
-            "before retrying."
+            "This batch has already been submitted during "
+            "this session. Check Gmail Sent before retrying."
         )
 
     confirmed = st.checkbox(
-        "I have verified the recipients and "
-        "certificate attachments, and authorize sending."
+        "I have verified all recipients and both "
+        "certificates, and authorize sending."
     )
 
     if st.button(
@@ -1183,21 +899,21 @@ if email_configured:
         type="primary",
         disabled=not confirmed or already_submitted
     ):
-
         progress = st.progress(0)
 
+        # Record attempts before sending to reduce
+        # accidental duplicate submissions.
         st.session_state["sending_results"] = [
             {
                 "Name": item["student"]["Name"],
                 "Email": item["student"]["Email"],
-                "Attachments": certificate_count,
+                "Attachments": 2,
                 "Status": "Not yet attempted"
             }
             for item in successful
         ]
 
         for index, item in enumerate(successful):
-
             student = item["student"]
 
             st.session_state[
@@ -1207,7 +923,6 @@ if email_configured:
             )
 
             try:
-
                 send_certificate(
                     sender=sender,
                     app_password=app_password,
@@ -1226,7 +941,6 @@ if email_configured:
                 status = "Accepted by Gmail"
 
             except Exception as error:
-
                 status = (
                     "Not confirmed - check Gmail Sent "
                     "before retrying"
@@ -1247,12 +961,11 @@ if email_configured:
 
 
 # ==========================================
-# STEP 12: SENDING REPORT
+# STEP 11: SENDING REPORT
 # ==========================================
 
 if "sending_results" in st.session_state:
-
-    st.subheader("11. Sending Results")
+    st.subheader("10. Sending Results")
 
     results_table = pd.DataFrame(
         st.session_state["sending_results"]
@@ -1274,7 +987,6 @@ if "sending_results" in st.session_state:
     )
 
     st.info(
-        "Gmail acceptance does not guarantee inbox "
-        "delivery. Check Gmail Sent before retrying "
-        "uncertain deliveries."
+        "Gmail acceptance does not guarantee inbox delivery. "
+        "Check Gmail Sent before retrying uncertain deliveries."
     )
