@@ -10,23 +10,31 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import Paragraph
 
 
-def create_certificate(student, template=None, background_bytes=None):
+def create_certificate(
+    student,
+    template=None,
+    background_bytes=None,
+    name_x=50,
+    name_y=49,
+    name_font_size=28,
+    name_color="#14234B",
+    name_width=65,
+):
     """
-    Generate a personalized certificate PDF.
+    Generate a personalized A4 landscape certificate.
 
-    student:
-        {
-            "Name": "Participant Name",
-            "Email": "email@example.com"
-        }
+    name_x, name_y:
+        Percentage positions measured from the top-left.
+        Both represent the CENTER of the name.
 
-    Returns:
-        PDF as bytes.
+    name_font_size:
+        Maximum name font size in PDF points.
+
+    name_width:
+        Maximum text area width as a percentage.
+
+    Returns PDF bytes.
     """
-
-    # ======================================
-    # VALIDATE STUDENT
-    # ======================================
 
     if not isinstance(student, dict):
         raise TypeError("Student must be a dictionary.")
@@ -36,9 +44,20 @@ def create_certificate(student, template=None, background_bytes=None):
     if not name:
         raise ValueError("Student name cannot be empty.")
 
+    if not 0 <= name_x <= 100:
+        raise ValueError("Invalid horizontal position.")
+
+    if not 0 <= name_y <= 100:
+        raise ValueError("Invalid vertical position.")
+
+    if not 10 <= name_width <= 100:
+        raise ValueError("Invalid name area width.")
+
+    if not 8 <= name_font_size <= 100:
+        raise ValueError("Invalid font size.")
+
     output = BytesIO()
 
-    # A4 landscape dimensions
     width = 841.89
     height = 595.28
 
@@ -47,12 +66,11 @@ def create_certificate(student, template=None, background_bytes=None):
         pagesize=(width, height)
     )
 
-    # ======================================
-    # CERTIFICATE BACKGROUND
-    # ======================================
+    # --------------------------------------
+    # DRAW CERTIFICATE BACKGROUND
+    # --------------------------------------
 
     if background_bytes:
-
         try:
             background = ImageReader(
                 BytesIO(background_bytes)
@@ -72,115 +90,83 @@ def create_certificate(student, template=None, background_bytes=None):
             raise ValueError(
                 "Unable to process certificate background."
             ) from error
-
     else:
-
         pdf.setFillColor(colors.white)
-
         pdf.rect(
-            0,
-            0,
-            width,
-            height,
+            0, 0, width, height,
             fill=1,
             stroke=0
         )
 
-    # ======================================
-    # NAME POSITION SETTINGS
-    # ======================================
+    # --------------------------------------
+    # NAME POSITION
+    # --------------------------------------
 
-    # Center name horizontally on certificate
-    center_x = width / 2
+    center_x = width * name_x / 100
+    center_y = height * (1 - name_y / 100)
 
-    # Name area width
-    text_width = width * 0.65
+    text_width = width * name_width / 100
 
-    # Target name area, measured from top
-    # Based on the provided certificate image
-    name_center_from_top =1290
-
-    # ======================================
-    # TEXT DRAWING FUNCTION
-    # ======================================
-
-    def draw_text(
-        text,
-        center_top,
-        size=28,
-        bold=True,
-        color="#14234B"
-    ):
-
-        safe_text = escape(str(text))
-
-        font_name = (
-            "Helvetica-Bold"
-            if bold
-            else "Helvetica"
-        )
-
-        paragraph = None
-        text_height = 0
-
-        # Automatically reduce font size
-        # when the name is too long
-        for font_size in range(size, 7, -1):
-
-            style = ParagraphStyle(
-                name="CertificateText",
-                fontName=font_name,
-                fontSize=font_size,
-                leading=font_size * 1.15,
-                alignment=TA_CENTER,
-                textColor=colors.HexColor(color),
-                spaceBefore=0,
-                spaceAfter=0
-            )
-
-            paragraph = Paragraph(
-                safe_text,
-                style
-            )
-
-            _, text_height = paragraph.wrap(
-                text_width,
-                height
-            )
-
-            # Maximum allowed text height
-            if text_height <= 42:
-                break
-
-        # Convert center position from top
-        # into ReportLab bottom-based coordinates
-        center_y = height - center_top
-
-        # Center text vertically
-        y = center_y - (text_height / 2)
-
-        # Draw the name
-        paragraph.drawOn(
-            pdf,
-            center_x - (text_width / 2),
-            y
-        )
-
-    # ======================================
-    # DRAW PARTICIPANT NAME
-    # ======================================
-
-    draw_text(
-        text=name,
-        center_top=name_center_from_top,
-        size=28,
-        bold=True,
-        color="#14234B"
+    # Keep the text area inside the page.
+    text_width = min(
+        text_width,
+        2 * min(center_x, width - center_x)
     )
 
-    # ======================================
-    # SAVE CERTIFICATE
-    # ======================================
+    if text_width <= 0:
+        raise ValueError(
+            "Name position is too close to the edge."
+        )
+
+    safe_text = escape(name)
+
+    paragraph = None
+    text_height = 0
+
+    # Reduce font size for long names.
+    for font_size in range(
+        int(name_font_size), 7, -1
+    ):
+        style = ParagraphStyle(
+            name="CertificateName",
+            fontName="Helvetica-Bold",
+            fontSize=font_size,
+            leading=font_size * 1.15,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor(name_color),
+            spaceBefore=0,
+            spaceAfter=0,
+            splitLongWords=True
+        )
+
+        paragraph = Paragraph(
+            safe_text,
+            style
+        )
+
+        _, text_height = paragraph.wrap(
+            text_width,
+            height
+        )
+
+        if text_height <= 42:
+            break
+
+    if text_height > 42:
+        raise ValueError(
+            "Participant name is too long for "
+            "the selected name area."
+        )
+
+    # Center the name vertically and horizontally.
+    draw_x = center_x - text_width / 2
+    draw_y = center_y - text_height / 2
+
+    paragraph.drawOn(
+        pdf,
+        draw_x,
+        draw_y
+    )
 
     pdf.showPage()
     pdf.save()
