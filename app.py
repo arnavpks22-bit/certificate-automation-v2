@@ -653,9 +653,7 @@ st.download_button(
 
 st.subheader("7. Send Certificates")
 
-try:
 
-    
 # ==========================================
 # SENDER EMAIL CONFIGURATION
 # ==========================================
@@ -676,7 +674,12 @@ app_password = st.text_input(
 ).replace(" ", "")
 
 st.caption(
-    "Use a Google App Password, not your normal Gmail password."
+    "Use a Google App Password, not your regular Gmail password."
+)
+
+# Check whether credentials have been entered
+email_configured = bool(
+    sender and app_password and len(app_password) == 16
 )
 
 if not sender or not app_password:
@@ -684,20 +687,17 @@ if not sender or not app_password:
         "Enter your Gmail address and App Password "
         "before sending certificates."
     )
-    st.stop()
 
-if len(app_password) != 16:
-    st.error("Gmail App Password must contain 16 characters.")
-    st.stop()
+elif len(app_password) != 16:
+    st.error(
+        "Gmail App Password must contain 16 characters."
+    )
 
+else:
+    st.success(
+        "Gmail credentials entered. Ready to attempt sending."
+    )
 
-    email_configured = bool(sender and app_password)
-
-except (FileNotFoundError, KeyError, TypeError):
-
-    email_configured = False
-    sender = ""
-    app_password = ""
 
 
 if not email_configured:
