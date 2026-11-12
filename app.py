@@ -655,41 +655,13 @@ st.subheader("7. Send Certificates")
 
 try:
 
-   
-# ==========================================
-# SENDER EMAIL CONFIGURATION
-# ==========================================
+    sender = str(
+        st.secrets["email"]["sender"]
+    ).strip()
 
-st.subheader("Sender Email Configuration")
-
-sender = st.text_input(
-    "Sender Gmail Address",
-    placeholder="example@gmail.com",
-    key="sender_email"
-).strip()
-
-app_password = st.text_input(
-    "Gmail App Password",
-    type="password",
-    placeholder="Enter your 16-character App Password",
-    key="sender_app_password"
-).replace(" ", "")
-
-st.caption(
-    "Use a Google App Password, not your normal Gmail password."
-)
-
-if not sender or not app_password:
-    st.warning(
-        "Enter your Gmail address and App Password "
-        "before sending certificates."
-    )
-    st.stop()
-
-if len(app_password) != 16:
-    st.error("Gmail App Password must contain 16 characters.")
-    st.stop()
-
+    app_password = str(
+        st.secrets["email"]["app_password"]
+    ).replace(" ", "")
 
     email_configured = bool(sender and app_password)
 
