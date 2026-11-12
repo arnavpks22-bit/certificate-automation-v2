@@ -15,11 +15,18 @@ def create_certificate(student, template=None, background_bytes=None):
     Generate a personalized certificate PDF.
 
     student:
-        {"Name": "Participant Name", "Email": "email@example.com"}
+        {
+            "Name": "Participant Name",
+            "Email": "email@example.com"
+        }
 
     Returns:
         PDF as bytes.
     """
+
+    # ======================================
+    # VALIDATE STUDENT
+    # ======================================
 
     if not isinstance(student, dict):
         raise TypeError("Student must be a dictionary.")
@@ -41,13 +48,12 @@ def create_certificate(student, template=None, background_bytes=None):
     )
 
     # ======================================
-    # BACKGROUND
+    # CERTIFICATE BACKGROUND
     # ======================================
 
     if background_bytes:
 
         try:
-
             background = ImageReader(
                 BytesIO(background_bytes)
             )
@@ -63,7 +69,6 @@ def create_certificate(student, template=None, background_bytes=None):
             )
 
         except Exception as error:
-
             raise ValueError(
                 "Unable to process certificate background."
             ) from error
@@ -82,17 +87,27 @@ def create_certificate(student, template=None, background_bytes=None):
         )
 
     # ======================================
-    # TEXT POSITION
+    # NAME POSITION SETTINGS
     # ======================================
 
-    center_x = width * 0.45
+    # Center name horizontally on certificate
+    center_x = width / 2
 
-    text_width = width * 0.64
+    # Name area width
+    text_width = width * 0.65
+
+    # Target name area, measured from top
+    # Based on the provided certificate image
+    name_center_from_top = 350
+
+    # ======================================
+    # TEXT DRAWING FUNCTION
+    # ======================================
 
     def draw_text(
         text,
-        top,
-        size=30,
+        center_top,
+        size=28,
         bold=True,
         color="#14234B"
     ):
@@ -108,16 +123,19 @@ def create_certificate(student, template=None, background_bytes=None):
         paragraph = None
         text_height = 0
 
-        # Reduce font size for longer names
+        # Automatically reduce font size
+        # when the name is too long
         for font_size in range(size, 7, -1):
 
             style = ParagraphStyle(
                 name="CertificateText",
                 fontName=font_name,
                 fontSize=font_size,
-                leading=font_size * 1.25,
+                leading=font_size * 1.15,
                 alignment=TA_CENTER,
-                textColor=colors.HexColor(color)
+                textColor=colors.HexColor(color),
+                spaceBefore=0,
+                spaceAfter=0
             )
 
             paragraph = Paragraph(
@@ -130,28 +148,39 @@ def create_certificate(student, template=None, background_bytes=None):
                 height
             )
 
-            if text_height <= 44:
+            # Maximum allowed text height
+            if text_height <= 42:
                 break
 
-        # Convert top-based position to PDF coordinates
-        y = height - top - text_height
+        # Convert center position from top
+        # into ReportLab bottom-based coordinates
+        center_y = height - center_top
 
+        # Center text vertically
+        y = center_y - (text_height / 2)
+
+        # Draw the name
         paragraph.drawOn(
             pdf,
-            center_x - text_width / 2,
+            center_x - (text_width / 2),
             y
         )
 
     # ======================================
-    # STUDENT NAME
+    # DRAW PARTICIPANT NAME
     # ======================================
 
     draw_text(
         text=name,
-        top=218,
-        size=30,
-        bold=True
+        center_top=name_center_from_top,
+        size=28,
+        bold=True,
+        color="#14234B"
     )
+
+    # ======================================
+    # SAVE CERTIFICATE
+    # ======================================
 
     pdf.showPage()
     pdf.save()
