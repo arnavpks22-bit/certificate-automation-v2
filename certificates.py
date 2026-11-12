@@ -98,7 +98,7 @@ def create_certificate(student, template=None, background_bytes=None):
 
     # Target name area, measured from top
     # Based on the provided certificate image
-    name_center_from_top = 350
+    name_center_from_top =100
 
     # ======================================
     # TEXT DRAWING FUNCTION
